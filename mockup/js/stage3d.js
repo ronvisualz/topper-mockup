@@ -407,7 +407,9 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     return new Promise(r => setTimeout(r, 300)).then(() => runTL('descida3d', 2400, t => { camT = EASE.between(t / 2400); }));
   }
 
-  let anNoScreen = false;
+  let anNoScreen = false, anStill = false;   // anStill: tests only — the measure of the shafts holds reduced motion's freeze
+  let anLean = 0, lowFor = 0, anCountFrom = Infinity;   // the light amphitheatre's guard (see the frame loop): level 0, 1 or 2
+  const LEAN_RES = [1, 0.75, 0.6]; let anSlowTest = 0;   // anSlowTest: tests only — ms of work added to each frame, as a slow GPU would
   /* tests only: what the picture shows, pixel by pixel (an id pass: screen, water, hats, lamps, posters, sky, fog bank, the three
      rings of trees; the rest is the room), with the measures of §15 taken from the real frame */
   function measureAnfi() {
@@ -430,6 +432,9 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
       else if (n.startsWith('SM_Lamp')) sw(o, C('lampadas'));
       else if (n.startsWith('REF_Portal')) sw(o, C('portais'));
       else if (n.startsWith('SM_Stage_Water')) sw(o, C('agua'));
+      else if (n.startsWith('SM_TreeD_')) {               // round D: the 3D forest — LOD 0 (within 24 m) «perto», LOD 1 «longe»
+        const u = o.material.uniforms; u.uIdOn.value = 1; u.uId.value = sRGB(n.startsWith('SM_TreeD_near') ? 'perto' : 'longe'); swaps.push([o, o.material, () => { u.uIdOn.value = 0; }]);
+      }
       else if (n.startsWith('SM_Tree_') || n.startsWith('SM_FogBank')) {
         const k = n.startsWith('SM_FogBank') ? 'nevoeiro' : { near: 'perto', mid: 'meio', far: 'longe' }[n.slice(8).split('_')[0]], u = o.material.uniforms;
         u.uIdOn.value = 1; u.uId.value = sRGB(k); swaps.push([o, o.material, () => { u.uIdOn.value = 0; }]);
@@ -476,7 +481,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
       const L_ = names.indexOf('lenco') + 1; let top = [0, 0, 0], tl = -1; for (let i = 0; i < W * H; i++) if (cls[i] === L_) { const l = 0.2126 * sp[i * 4] + 0.7152 * sp[i * 4 + 1] + 0.0722 * sp[i * 4 + 2]; if (l > tl) { tl = l; top = [sp[i * 4], sp[i * 4 + 1], sp[i * 4 + 2]]; } }
       out.lenco_sozinho = { mais_claro: top, dif_max: Math.max(Math.abs(top[0] - 224), Math.abs(top[1] - 39), Math.abs(top[2] - 39)) }; }
     if (silkTop[3] >= 0) out.lenco = { px: (by.lenco || []).length, luzes_a_frente_px: silkLit, mais_claro: silkTop.slice(0, 3), dif_max: Math.max(Math.abs(silkTop[0] - 224), Math.abs(silkTop[1] - 39), Math.abs(silkTop[2] - 39)) };
-    out._cls = cls; out._names = names;
+    out._cls = cls; out._names = names; out._lum = lum;
     out.classes = {}; for (const [k, v] of Object.entries(by)) out.classes[k] = { n: v.length, mediana: pct(q(v.slice(), 0.5)), p99: pct(q(v.slice(), 0.99)) };
     const md = k => out.classes[k] ? out.classes[k].mediana : null, fundo = [md('ceu'), md('nevoeiro'), md('chao')].filter(v => v != null);
     out.oculo = { perto: md('perto'), meio: md('meio'), longe: md('longe'), fundo_min: fundo.length ? Math.min(...fundo) : null };
@@ -627,7 +632,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
   let base = new THREE.Vector3(0, CAM.y, 9.5), casePos = new THREE.Vector3(0, 3.2, 3.5), camBackT = -1;
   function frame() {
     const W = innerWidth, H = innerHeight, ph = isPhone();
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, ph ? 1.5 : 2)); renderer.setSize(W, H, false);
+    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, ph ? 1.5 : 2) * (anMode ? LEAN_RES[anLean] : 1)); renderer.setSize(W, H, false);   // the light amphitheatre: less resolution
     if (anMode) { camera.aspect = W / H; const P = anPose(); camera.fov = P.fov; camera.updateProjectionMatrix(); return; }
     if (thMode) {
       TP = thPoses(); camera.aspect = W / H;
@@ -660,6 +665,10 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
 
   /* frame loop + the fps guard (below 24 fps for 2 s: the flat version) */
   let slowFor = 0, failed = false, fpsCb = null;
+  // round D, the owner's option (b): the amphitheatre goes light when the GPU cannot keep up — 2 s of frames under 50 fps, counted from
+  // half a second after it is ready to be seen (not while it loads under the veil), single hitches over 250 ms left out — and stays light
+  // for the visit: level 1, the trees out of the water's mirror and 0.75 of the resolution; still slow 2 s more, level 2, 0.6 (the text is
+  // HTML: it stays sharp) — anLean, lowFor, anCountFrom, LEAN_RES
   onFrame((dt, now) => {
     if (!active) return;
     tick();
@@ -667,7 +676,8 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     cam.x = damp(cam.x, still ? 0 : pointer.x * CAM.sway.x, 2.6, dt); cam.y = damp(cam.y, still ? 0 : -pointer.y * CAM.sway.y, 2.6, dt);
     if (camBackT >= 0) { /* the approach after a swap returns over 800 ms */ }
     if (anMode && AN) {
-      runTweens(now); AN.freeze(reduced());
+      if (anSlowTest) { const t0 = performance.now(); while (performance.now() - t0 < anSlowTest); }
+      runTweens(now); AN.freeze(reduced() || anStill);
       const P = anPose(); let pos = P.pos, look = P.look, fov = P.fov;
       if (anFrom && anCamK < 1) { const k = EASE.cam(anCamK); pos = anFrom.pos.clone().lerp(P.pos, k); look = anFrom.look.clone().lerp(P.look, k); fov = lerp(anFrom.fov, P.fov, k);
         const o = anFrom.open; if (o) { const ms = anCamK * o.dur; fov = ms < o.ms ? lerp(anFrom.fov, o.fov, EASE.cam(ms / o.ms)) : lerp(o.fov, P.fov, EASE.cam((ms - o.ms) / (o.dur - o.ms))); } }   // C2c: the lens opens first
@@ -676,6 +686,8 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
       camera.lookAt(look);
       if (anState === 'galeria') setPortalFocus(nearestPortal());
       AN.tick(now / 1000); sampleFilm(now); AN.setViewport(renderer.getContext().drawingBufferHeight, renderer.getPixelRatio());
+      if (anLean < 2 && now > anCountFrom && dt > 0 && dt < 0.25) { lowFor = 1 / dt < 50 ? lowFor + dt : Math.max(0, lowFor - dt);
+        if (lowFor > 2) { anLean++; lowFor = 0; anCountFrom = now + 500; if (AN.lean) AN.lean(true); frame(); log({ name: 'anfi-leve', nivel: anLean, fps: Math.round(1 / dt) }); } }   // the switch's own frame not counted
     } else if (thMode && TP) {
       const a = TP.porta, b = TP.lugar, ck = EASE.cam(caseK);
       const pos = a.pos.clone().lerp(b.pos, camT).lerp(TP.case.pos, ck), look = a.look.clone().lerp(b.look, camT).lerp(TP.case.look, ck);
@@ -693,7 +705,9 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     if (!tl.render) camK = damp(camK, 0, 1000 / T_CAM_BACK * 3, dt);
     // the screen floats ±4 cm over 7 s
     const fl = still ? 0 : Math.sin(now / 1000 * Math.PI * 2 / 7) * 0.04;
-    screen.position.copy(shown.pos).add(new THREE.Vector3(0, fl, 0)); screen.scale.setScalar(Math.max(0.001, shown.scale) * (anMode ? AN_SCALE : 1)); screenMat.opacity = shown.op; if (anMode && AN) { AN.screenMat.uniforms.map.value = screenMat.map; AN.screenMat.uniforms.uOp.value = shown.op; } screen.visible = shown.op > 0.001 && !anNoScreen;
+    screen.position.copy(shown.pos).add(new THREE.Vector3(0, fl, 0)); screen.scale.setScalar(Math.max(0.001, shown.scale) * (anMode ? AN_SCALE : 1)); screenMat.opacity = shown.op; screen.visible = shown.op > 0.001 && !anNoScreen;
+    if (anMode && AN) { AN.screenMat.uniforms.map.value = screenMat.map; AN.screenMat.uniforms.uOp.value = shown.op;   // the shafts keep off the screen only while it shows (a negative size: no screen)
+      if (AN.setNoScreen) AN.setNoScreen(screen.position, screen.visible ? SCREEN.w / 2 * screen.scale.x : -1, screen.visible ? SCREEN.h / 2 * screen.scale.y : -1); }
     refl.visible = screen.visible && shown.scale > 0.98 && !anMode; reflMat.uniforms.uO.value = 0.18 * shown.op;
     // hats: lifted 0.15 m and lit when theirs is on the screen; out of the filter they sink under the stage
     for (const h of hats) {
@@ -725,6 +739,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     enter(i = 0, { gate } = {}) {
       if (anfiOn()) {
         let readyRes; readyP = new Promise(r => { readyRes = r; });         // the amphitheatre (C1): no opening, no silk, no descent — the work is on the screen at once
+        anCountFrom = Infinity; lowFor = 0; readyP.then(() => { anCountFrom = performance.now() + 500; });   // the light guard counts once it can be seen
         active = true; setMode(false); queue.length = 0; tl.render = null; running = false; caseK = 0; camK = 0;
         for (const o of SIMPLE) o.visible = false; if (TH) TH.group.visible = false;
         const p = list[Math.max(0, Math.min(list.length - 1, i))];
@@ -735,7 +750,11 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
             // every shader ready before the opening's first frame: compiled, then one real frame drawn with everything that will show
             // (the silk, the screen, the motes) — the water's mirror compiles its own variants in it
             enqueue(async () => { const sv = screen.visible; silk.visible = true; silk.scale.setScalar(0.3); silk.position.set(0, SCREEN.c.y, SCREEN.c.z + 0.75); screen.visible = true; burst.visible = true;
-              try { if (renderer.compileAsync) await renderer.compileAsync(scene, camera); renderer.render(scene, camera); } catch (e) {}
+              try { if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
+                // round D review: and for the water's mirror, whose linear target needs variants of its own — compileAsync makes only the
+                // screen's, and from the arrival the mirror does not see everything it will (the screen's own came ~2 s after the veil, in C2c too)
+                if (AN.mirrorTarget) { const rt = renderer.getRenderTarget(); renderer.setRenderTarget(AN.mirrorTarget()); renderer.compile(scene, camera); renderer.setRenderTarget(rt); }
+                renderer.render(scene, camera); } catch (e) {}
               silk.visible = false; screen.visible = sv; burst.visible = false; log({ name: 'compilado', programas: renderer.info.programs.length }); });
             // the first work's film too, still under the veil: loaded, playing, and its first frame already on the GPU (it cost 176 ms in view)
             enqueue(() => new Promise(res => { const done = () => { clearTimeout(to); try { vtex.needsUpdate = true; renderer.initTexture(vtex); } catch (e) {} log({ name: 'filme-pronto', readyState: video.readyState }); res(); };
@@ -812,7 +831,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     turnToPortal(k) { const a = portalAngles()[k]; if (a == null || anState !== 'galeria') return; const d = ((a - anYaw) % 360 + 540) % 360 - 180; if (Math.abs(d) > 2 || galZoom < 1) enqueue(async () => { if (anState !== 'galeria') return; if (Math.abs(d) > 2) await turnTo(anYaw + d); await zoomOn(k); }); },
     portalBox(k) { return AN ? portalBoxPx(k) : null; }, get galZoom() { return galZoom; },
     get dragged() { return anDragged; },
-    get anfi() { return { mode: anMode, loaded: !!AN, cam: anCam, state: anState, fov: +camera.fov.toFixed(1), yaw: +anYaw.toFixed(1), portal: anPortal, uT: AN ? +AN.U.uT.value.toFixed(3) : null, mix: AN ? AN.mix : null, loadMs: AN ? AN.loadMs : null, readyMs: AN ? AN.readyMs : null, triangles: AN ? AN.triangles : null, film: anFilm.slice(0, 3) }; },
+    get anfi() { return { mode: anMode, loaded: !!AN, cam: anCam, state: anState, fov: +camera.fov.toFixed(1), yaw: +anYaw.toFixed(1), portal: anPortal, uT: AN ? +AN.U.uT.value.toFixed(3) : null, mix: AN ? AN.mix : null, loadMs: AN ? AN.loadMs : null, readyMs: AN ? AN.readyMs : null, triangles: AN ? AN.triangles : null, film: anFilm.slice(0, 3), leve: anLean }; },
     anfiCam(n) {   // mockup bar and tests: a place at once (the opening skipped)
       if (anState === 'abertura') anSkip(); finishTweens(); queue.length = 0; tl.render = null; running = false;
       anCam = n || { chegada: 'lugar', lugar: 'galeria', galeria: 'chegada' }[anCam]; anCamK = 1; anFrom = null; galZoom = 0;
@@ -825,7 +844,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     // tests only: the opening's silk held at a moment (fase 'voo' 0–1400 ms or 'saida' 0–900 ms), seen from the arrival; null puts it away
     anfiSilkAt(fase, ms) { if (fase == null) { silk.visible = false; silkMat.uniforms.uCrumple.value = 0; silkMat.uniforms.uDiag.value = 0; silkMat.uniforms.uPullT.value = 0; shown.op = 1; return; } anCam = 'chegada'; anCamK = 1; anFrom = null; shown.op = fase === 'voo' ? 0 : 1; if (fase === 'voo') silkFlight(ms / 1400); else silkExit(ms / 900); },   // as in the opening: no film yet during the flight
     // tests only: tune the amphitheatre's live values against the B2 renders (screen emission, film factor, the hats' lights)
-    anfiTune(o = {}) { if (!AN) return null; if (o.emit != null) AN.screenMat.uniforms.uEmit.value = o.emit; if (o.filmK != null) anFilmK = o.filmK; for (const k of ['key', 'fill', 'amb']) if (o[k] != null) AN_LIGHT[k] = o[k]; setAnfi(anMode); return { emit: AN.screenMat.uniforms.uEmit.value, filmK: anFilmK, ...AN_LIGHT }; },
+    anfiTune(o = {}) { if (!AN) return null; if (o.slowMs != null) { anSlowTest = o.slowMs; return { slowMs: anSlowTest }; } if (AN.tune && ['sunK', 'treeSun', 'treeAmb', 'shaftK', 'back'].some(k => o[k] != null)) return AN.tune(o); if (o.emit != null) AN.screenMat.uniforms.uEmit.value = o.emit; if (o.filmK != null) anFilmK = o.filmK; for (const k of ['key', 'fill', 'amb']) if (o[k] != null) AN_LIGHT[k] = o[k]; setAnfi(anMode); return { emit: AN.screenMat.uniforms.uEmit.value, filmK: anFilmK, ...AN_LIGHT }; },
     anfiFilmK(k) { if (k != null) anFilmK = k; return anFilmK; },
     anfiMix(k) { if (AN && k != null) AN.setMix(k); return AN ? AN.mix : null; },
     anfiYaw(y, p = 0) { anYaw = y; anPitch = p; },
@@ -836,9 +855,74 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
       if (o.image) return new Promise(res => { ++loadId; video.pause(); video.removeAttribute('src'); video.load(); const im = new Image(); im.onload = () => { posterTex.dispose(); posterTex.image = im; posterTex.needsUpdate = true; screenMat.map = posterTex;   /* dispose: the GPU copy has a fixed size */ reflMat.uniforms.map.value = posterTex; screenMat.needsUpdate = true; res(); }; im.src = o.image; });   // the very still a render used
       return new Promise(res => { video.pause(); video.src = asset(o.clip); video.load(); video.addEventListener('loadeddata', () => { video.currentTime = o.t; video.addEventListener('seeked', () => { screenMat.map = vtex; reflMat.uniforms.map.value = vtex; screenMat.needsUpdate = true; vtex.needsUpdate = true; res(); }, { once: true }); }, { once: true }); });
     },
-    anfiMeasure() { const m = measureAnfi(); delete m._cls; delete m._names; return m; },
+    anfiMeasure() { const m = measureAnfi(); delete m._cls; delete m._names; delete m._lum; return m; },
     // tests only (criterion 4): what moves in 3 s at rest — per class, the share of its pixels that change by more than 2/255 from
     // second to second (the film paused); and the trees' fastest sway on screen, worked out from their shader (% of the width per s)
+    // tests only (round D, Task 5): real 3D trees shift on screen with depth — from the arrival to the seat, the 5 trees nearest the seat
+    // move ≥ 2× as much as the 5 farthest (their mid-height, both in view); and no card trees left (SM_Tree_*)
+    anfiParallax() {
+      if (!AN || !AN.DF) return { razao: null, cartoes: AN ? AN.group.children.length : null };
+      const cam = camera.clone(), proj = (pose, p) => { cam.position.copy(pose.pos); cam.fov = pose.fov; cam.aspect = camera.aspect; cam.updateProjectionMatrix(); cam.lookAt(pose.look); cam.updateMatrixWorld();
+        const v = p.clone().project(cam); return Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z < 1 ? new THREE.Vector2((v.x + 1) * innerWidth / 2, (1 - v.y) * innerHeight / 2) : null; };
+      // the camera moved, not turned: both views look the seat's way (a turn moves near and far alike and hides the depth)
+      const Bp = poseOf('lugar'), A0 = poseOf('chegada'), A = { pos: A0.pos, fov: Bp.fov, look: A0.pos.clone().add(Bp.look.clone().sub(Bp.pos)) }, seat = Bp.pos;
+      const ts = AN.forestPositions().filter(t => t.sp === 'abeto' || t.sp === 'larico').map(t => ({ p: new THREE.Vector3(t.x, t.y + t.H * 0.5, t.z), d: Math.hypot(t.x - seat.x, t.z - seat.z) }))
+        .map(t => ({ ...t, a: proj(A, t.p), b: proj(Bp, t.p) })).filter(t => t.a && t.b).sort((x, y) => x.d - y.d);
+      const mv = l => l.reduce((s, t) => s + t.a.distanceTo(t.b), 0) / Math.max(1, l.length), near = ts.slice(0, 5), far = ts.slice(-5);
+      let cards = 0, flat = 0; AN.group.traverse(o => { if (o.isMesh && o.name.startsWith('SM_Tree_')) cards++; });
+      for (const im of AN.forest) { if (im.userData.sp === 'feto') continue; const bb = im.geometry.boundingBox; if (Math.min(bb.max.x - bb.min.x, bb.max.z - bb.min.z) < 1.0) flat++; }   // volume, not a plane
+      return { visiveis: ts.length, perto_px: Math.round(mv(near)), longe_px: Math.round(mv(far)), razao: +(mv(near) / Math.max(1e-6, mv(far))).toFixed(2), cartoes: cards, planas: flat };
+    },
+    // tests only (round D, Task 7): round D's light rules on the site's own frame (sunset_d.d_metrics, with the id pass's classes).
+    // The render tells sunlit from tree-shaded by a ray toward the sun; here the frame is drawn without the baked sun layer and with it
+    // at full strength, and a room pixel is «sol» where the sun adds ≥ 0.03 and ≥ 25% of it, «sombra» where it adds < 0.01 (so the
+    // classes do not move with the sun's tuning); the light measures themselves are read on the frame as it is. Then, as in the render:
+    // the room's right half against its left (about the screen's centre), the stripes along the rows of the right half (the sun's share
+    // falls to ≤ ½ and comes back ≥ 2×: a tree's shadow across the patch), the contrast of sol against sombra, the screen against the
+    // sunlit patch, the patch touching the screen (box + 2%),
+    // the brightest of the oculus (sky, trees, ground; p99.5) as a share of the screen's p99, and burnt-out pixels (> 0.95) outside the films
+    anfiSol() {
+      if (!AN || !AN.DF) return null;
+      const k0 = AN.tune().sunK; AN.setSunK(0); const m0 = measureAnfi(); AN.setSunK(1); const m1 = measureAnfi(); AN.setSunK(k0); const m = measureAnfi();
+      const cls = m._cls, names = m._names, lum = m._lum, lum0 = m0._lum, lum1 = m1._lum, W = m.w, H = m.h, r = this.screenRect(), k = W / innerWidth;
+      const sx0 = r.left * k, sx1 = r.right * k, sy0 = H - r.bottom * k, sy1 = H - r.top * k, cx = (sx0 + sx1) / 2, dil = 0.02 * W;
+      const ix = n => names.indexOf(n) + 1, TELA = ix('tela'), PORT = ix('portais'), OUT_ = [ix('ceu'), ix('perto'), ix('longe'), ix('chao')];
+      const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0, q = (a, p) => { if (!a.length) return 0; const b = a.slice().sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(p * b.length))]; };
+      const kind = new Uint8Array(W * H);   // 1 sol, 2 sombra (room, right half only)
+      const R = [], Lf = [], lit = [], shade = [], tela = [], oc = []; let touch = false, burnt = 0, nb = 0;
+      for (let i = 0; i < W * H; i++) { const x = i % W, y = (i - x) / W, c = cls[i];
+        if (c === 0) { (x > cx ? R : Lf).push(lum[i]);
+          if (x > cx) { const s = lum1[i] - lum0[i]; if (s >= 0.03 && s >= 0.25 * lum1[i]) { kind[i] = 1; lit.push(lum[i]); if (x > sx0 - dil && x < sx1 + dil && y > sy0 - dil && y < sy1 + dil) touch = true; } else if (s < 0.01) { kind[i] = 2; shade.push(lum[i]); } } }
+        else if (c === TELA) tela.push(lum[i]); else if (OUT_.includes(c)) oc.push(lum[i]);
+        if (c !== TELA && c !== PORT && c !== 255) { nb++; if (lum[i] > 0.95) burnt++; } }
+      let stripes = 0;
+      for (let y = 0; y < H; y += 2) { let hi = 0, lo = 1e9, st = 0, n = 0;   // along the row, on the sun's own share: lit (≥ 0.03) → ≤ ½ of it → back to ≥ 2× and lit
+        for (let x = Math.ceil(cx); x < W; x++) { const i = y * W + x; if (cls[i] !== 0) continue; const v = Math.max(0, lum1[i] - lum0[i]) + 0.004;
+          if (st === 0) { hi = Math.max(hi, v); if (hi >= 0.034 && v <= hi / 2) { st = 1; lo = v; } } else { lo = Math.min(lo, v); if (v >= lo * 2 && v >= 0.034) { n++; st = 0; hi = v; } } }
+        stripes = Math.max(stripes, n); }
+      const pctOf = (a, b) => a.length && b.length ? +(mean(a) / Math.max(1e-6, mean(b))).toFixed(2) : null;
+      return { lado_ratio: +(mean(R) / Math.max(1e-6, mean(Lf))).toFixed(2), riscas: stripes, riscas_contraste: pctOf(lit, shade), tela_vs_mancha: pctOf(tela, lit),
+        mancha_toca_tela: touch, oculo_mais_claro_pct_tela: tela.length && oc.length ? Math.round(q(oc, 0.995) / Math.max(1e-6, q(tela, 0.99)) * 1000) / 10 : null,
+        estoiro_pct: Math.round(burnt / Math.max(1, nb) * 10000) / 100, medias: { tela: +mean(tela).toFixed(3), sol: +mean(lit).toFixed(3), sombra: +mean(shade).toFixed(3), esquerda: +mean(Lf).toFixed(3), direita: +mean(R).toFixed(3) },
+        amostras: { sala: R.length + Lf.length, sol: lit.length, sombra: shade.length, tela: tela.length } };
+    },
+    // tests only (round D, Task 6): the rays and the dust — their share of the frame (the frame with and without them), the share of the
+    // screen's rectangle they touch (never over the film), and, frozen as with reduced motion, how many of their pixels off the screen change in 1 s (0)
+    async anfiShafts() {
+      if (!AN || !AN.DF || !AN.shafts) return null;
+      const gl = renderer.getContext(), W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+      const read = () => { renderer.render(scene, camera); const px = new Uint8Array(W * H * 4); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; };
+      const dif = (a, b, i) => Math.abs(a[i * 4] - b[i * 4]) + Math.abs(a[i * 4 + 1] - b[i * 4 + 1]) + Math.abs(a[i * 4 + 2] - b[i * 4 + 2]) > 6;
+      video.pause(); anStill = true; await new Promise(res => setTimeout(res, 700));   // reduced motion's freeze (held by the frame loop); the film's light settles on the paused frame
+      const on = read(); AN.shafts.visible = false; const off = read(); AN.shafts.visible = true;
+      const r = this.screenRect(), k = W / innerWidth, x0 = Math.floor(r.left * k), x1 = Math.ceil(r.right * k), y0 = H - Math.ceil(r.bottom * k), y1 = H - Math.floor(r.top * k);
+      let n = 0, scr = 0, inScr = 0; const mask = new Uint8Array(W * H);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x, s = x >= x0 && x < x1 && y >= y0 && y < y1; if (s) inScr++; if (dif(on, off, i)) { n++; mask[i] = 1; if (s) scr++; } }
+      const a = read(); await new Promise(res => setTimeout(res, 1000)); const b = read(); let still = 0;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = y * W + x; if (mask[i] && !(x >= x0 && x < x1 && y >= y0 && y < y1) && dif(a, b, i)) still++; }   // off the screen: the film may change, the shafts may not
+      anStill = false; const pr = video.play(); if (pr && pr.catch) pr.catch(() => {});
+      return { raios_pct: Math.round(n / (W * H) * 1000) / 10, sobre_tela_pct: Math.round(scr / Math.max(1, inScr) * 1000) / 10, parado_mudou_px: still };
+    },
     async anfiAlive() {
       video.pause(); const m = measureAnfi(), cls = m._cls, names = m._names, gl = renderer.getContext(), W = gl.drawingBufferWidth, H = gl.drawingBufferHeight, frames = [];
       for (let k = 0; k < 4; k++) { if (k) await new Promise(r => setTimeout(r, 1000)); renderer.render(scene, camera); const px = new Uint8Array(W * H * 4); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px); frames.push(px); }
@@ -847,7 +931,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
         for (let k = 1; k < 4; k++) { const a = frames[k - 1], b = frames[k]; if (Math.abs(a[i * 4] - b[i * 4]) + Math.abs(a[i * 4 + 1] - b[i * 4 + 1]) + Math.abs(a[i * 4 + 2] - b[i * 4 + 2]) > 6) { ch[c] = (ch[c] || 0) + 1 / 3; break; } } }
       const muda = Object.fromEntries(Object.entries(n).map(([c, v]) => [c, Math.round((ch[c] || 0) / v * 1000) / 10]));
       // the trees: x += 0.0087·sin(0.5·t + φ)·y·0.7 → at most 0.003 05·y m/s; on screen, through this camera, at each card's distance
-      let tree = 0; const v = new THREE.Vector3(), pxm = camera.projectionMatrix.elements[0] * W / 2;
+      let tree = AN.DF ? AN.forestSwayPx(camera, W, H) : 0; const v = new THREE.Vector3(), pxm = camera.projectionMatrix.elements[0] * W / 2;   // round D: the 3D trees' own sway
       AN.group.traverse(o => { if (!o.isMesh || !o.name.startsWith('SM_Tree_')) return; const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox(); const bb = g.boundingBox;
         for (const x of [bb.min.x, bb.max.x]) for (const z of [bb.min.z, bb.max.z]) { v.set(x, bb.max.y, z).applyMatrix4(o.matrixWorld).applyMatrix4(camera.matrixWorldInverse); if (v.z < -1) tree = Math.max(tree, 0.0087 * 0.5 * 0.7 * bb.max.y * pxm / -v.z); } });
       const pr = video.play(); if (pr && pr.catch) pr.catch(() => {});
@@ -856,7 +940,7 @@ export function createStage3D(canvas, { projects, reduced, onShown, onState, the
     // tests only: hold a framing and a light (camT 0 «à porta» → 1 «no lugar»; light 0 «sala acesa» → 1 «espetáculo»; open 0 → 1)
     hold(o = {}) { if (o.camT != null) camT = o.camT; if (o.light != null) setLight(o.light); if (o.open != null) { curtainK = 1 - o.open; setCurtains(curtainK); } if (o.caseK != null) caseK = o.caseK; if (o.poster) { video.pause(); screenMat.map = posterTex; reflMat.uniforms.map.value = posterTex; screenMat.needsUpdate = true; } },
     seatTops() { return rows.map(r => [r[0], r[1]]); },
-    stats() { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles }; },
+    stats() { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, programs: renderer.info.programs.length, pr: renderer.getPixelRatio() }; },
     video
   };
 }
