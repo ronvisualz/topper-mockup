@@ -95,6 +95,12 @@ async function loadNow() {
   // the trees' sun and sky: matched to the d1 renders (25 Nov) — seen from the seat they are near silhouettes (their lit sides face
   // away), and AgX's curve hides how much: at 1 the oculus' trees read 2.3× the render; at 0 / 0 nearly its value; 0.12 / 0.35 keeps a little life
   const uTreeK = { value: new THREE.Vector2(0.12, 0.35) };
+  // round D3 (point 4): behind the audience the crowns read as night over the rim — a warm edge of the low sun on the crowns' outer fronds
+  // (their outline against the sky), on the trees across from the oculus (~140–220°), higher in the crown more: x the strength, y how much
+  // the solid middle of a frond is spared (toward its cut-out edge the light is fuller)
+  const uRim = { value: new THREE.Vector2(0.10, 0.5) };
+  // round D3 (point 6): the fronds' cut-out edge by alpha to coverage (the canvas has MSAA) — a define, so that off the shader is round D's
+  let A2C = 0;
 
   /* the baked surfaces: light × repeating texture → Blender's view (the colour table) */
   const TILE = { MAT_wood: [tWood, info.tile_m.wood], MAT_niche: [tWood, info.tile_m.wood], MAT_bench: [tBench, info.tile_m.bench],
@@ -213,15 +219,15 @@ async function loadNow() {
      around (less deep in the crown); then the haze toward the sky behind, and Blender's view. The tips sway (≤ 0.4°); the trunk not:
      the baked shadows on the room stay true. */
   function forestMat(m, F, H, Rr) {
-    return new THREE.ShaderMaterial({ toneMapped: false, side: THREE.DoubleSide, vertexColors: true,
+    return new THREE.ShaderMaterial({ toneMapped: false, side: THREE.DoubleSide, vertexColors: true, alphaToCoverage: !!A2C, defines: { A2C },
       uniforms: { ...U, ...LU, ...SU, atlas: { value: tAtlas }, uTint: { value: new THREE.Color(m.tint) }, uBark0: { value: new THREE.Vector3(...F.bark[0]) }, uBark1: { value: new THREE.Vector3(...F.bark[1]) },
         uSunE: { value: new THREE.Vector3(...info.sun.colour).multiplyScalar(info.sun.energy / Math.PI) }, uTrans: { value: (F.translucency || {})[m.sp] ?? 0.2 }, uCut: { value: F.cut ?? 0.35 },
-        uH: { value: H }, uR: { value: Rr }, uSway: { value: 0.007 }, uHaze: { value: info.haze ? info.haze.density : 0.002 }, uIdOn: { value: 0 }, uId: { value: new THREE.Color() }, uTreeK },
+        uH: { value: H }, uR: { value: Rr }, uSway: { value: 0.007 }, uHaze: { value: info.haze ? info.haze.density : 0.002 }, uIdOn: { value: 0 }, uId: { value: new THREE.Color() }, uTreeK, uRim },
       // the sky's light on a tree (its front and back face) and the haze toward the sky behind it vary slowly: they are worked out per
       // vertex, so a frond's pixel (drawn twice, with the water's mirror) only reads its texture, the sun and the view — on an integrated
       // GPU the trees' pixels were half the frame's cost (Task 7)
-      vertexShader: 'attribute float aSol; uniform float uT; uniform float uH; uniform float uR; uniform float uSway; uniform float uHaze;\n' + SKY +
-        'varying vec2 vUv; varying vec3 vN; varying vec3 vW; varying float vBark; varying float vSol; varying vec3 vAmbF; varying vec3 vAmbB; varying vec3 vHazeC; varying float vHazeK;\n' +
+      vertexShader: 'attribute float aSol; uniform float uT; uniform float uH; uniform float uR; uniform float uSway; uniform float uHaze; uniform vec2 uRim;\n' + SKY +
+        'varying vec2 vUv; varying vec3 vN; varying vec3 vW; varying float vBark; varying float vSol; varying vec3 vAmbF; varying vec3 vAmbB; varying vec3 vHazeC; varying float vHazeK; varying float vRim;\n' +
         'void main(){ vUv = uv; vBark = 1.0 - color.r; vSol = aSol; vec3 p = position; float hf = clamp(p.y / uH, 0.0, 1.0);\n' +
         '  float ao = mix(0.5, 1.0, clamp(length(p.xz) / max(0.3, uR * (1.0 - 0.85 * hf)), 0.0, 1.0)) * mix(0.7, 1.0, hf);   /* deep in the crown and low: less sky */\n' +
         '  vec4 w = modelMatrix * instanceMatrix * vec4(p, 1.0); float ph = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9, 78.2))) * 43758.5) * 6.283;\n' +
@@ -229,16 +235,25 @@ async function loadNow() {
         '  vW = w.xyz; vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal); gl_Position = projectionMatrix * viewMatrix * w;\n' +
         '  vec3 up = 0.5 * skyRad(vec3(0.0, 1.0, 0.0)); vAmbF = (0.5 * skyRad(normalize(vec3(vN.x, max(vN.y, 0.15), vN.z))) + up) * ao;\n' +
         '  vAmbB = (0.5 * skyRad(normalize(vec3(-vN.x, max(-vN.y, 0.15), -vN.z))) + up) * ao;\n' +
-        '  vec3 v = vW - cameraPosition; vHazeC = skyRad(normalize(v)); vHazeK = 1.0 - exp(-uHaze * length(v)); }',   /* the haze: far trees melt into the sky behind them */
-      fragmentShader: 'uniform sampler2D atlas; uniform vec3 uTint; uniform vec3 uBark0; uniform vec3 uBark1; uniform vec3 uSunE; uniform float uTrans; uniform float uCut; uniform float uIdOn; uniform vec3 uId; uniform vec2 uTreeK; uniform vec3 uSunD;\n' +
-        'varying vec2 vUv; varying vec3 vN; varying vec3 vW; varying float vBark; varying float vSol; varying vec3 vAmbF; varying vec3 vAmbB; varying vec3 vHazeC; varying float vHazeK;\n' + NOISE + VIEW +
-        'void main(){ vec3 alb; float t = 0.0;\n' +
+        '  vec3 v = vW - cameraPosition; vHazeC = skyRad(normalize(v)); vHazeK = 1.0 - exp(-uHaze * length(v));   /* the haze: far trees melt into the sky behind them */\n' +
+        '  float back = smoothstep(0.6, 0.9, instanceMatrix[3].z / max(1.0, length(instanceMatrix[3].xz)));   /* the audience side, ~140–220° (away from the oculus) */\n' +
+        '  float outer = smoothstep(0.45, 1.0, length(p.xz) / max(0.3, uR * (1.0 - 0.85 * hf)));   /* the crown\'s outer fronds: its outline */\n' +
+        '  vRim = uRim.x * back * hf * outer * smoothstep(18.0, 28.0, length(v)); }',   /* the crowns seen over the rim, not those overhead */
+      fragmentShader: 'uniform sampler2D atlas; uniform vec3 uTint; uniform vec3 uBark0; uniform vec3 uBark1; uniform vec3 uSunE; uniform float uTrans; uniform float uCut; uniform float uIdOn; uniform vec3 uId; uniform vec2 uTreeK; uniform vec3 uSunD; uniform vec2 uRim;\n' +
+        'varying vec2 vUv; varying vec3 vN; varying vec3 vW; varying float vBark; varying float vSol; varying vec3 vAmbF; varying vec3 vAmbB; varying vec3 vHazeC; varying float vHazeK; varying float vRim;\n' + NOISE + VIEW +
+        'void main(){ vec3 alb; float t = 0.0, edge = 0.0, cov = 1.0;\n' +
+        '#if A2C\n' +   /* round D3 (point 6): the cut-out's edge as coverage, from the alpha's own slope (the id pass keeps the plain cut) */
+        '  vec4 a = texture2D(atlas, vUv); if (vBark < 0.5) cov = clamp((a.a - uCut) / max(fwidth(a.a), 1e-4) + 0.5, 0.0, 1.0);\n' +
         '  if (vBark > 0.5) alb = mix(uBark0, uBark1, fbm(vec2(vW.x + vW.z, vW.y * 0.35) * 3.0));\n' +
-        '  else { vec4 a = texture2D(atlas, vUv); if (a.a < uCut) discard; alb = uTint * a.rgb; t = uTrans; }\n' +
+        '  else { if (uIdOn > 0.5 ? a.a < uCut : cov <= 0.0) discard; alb = uTint * a.rgb; t = uTrans; edge = 1.0 - uRim.y * smoothstep(uCut, 1.0, a.a); }\n' +
+        '#else\n' +
+        '  if (vBark > 0.5) alb = mix(uBark0, uBark1, fbm(vec2(vW.x + vW.z, vW.y * 0.35) * 3.0));\n' +
+        '  else { vec4 a = texture2D(atlas, vUv); if (a.a < uCut) discard; alb = uTint * a.rgb; t = uTrans; edge = 1.0 - uRim.y * smoothstep(uCut, 1.0, a.a); }   /* fuller toward the cut-out\'s edge, never a glitter */\n' +
+        '#endif\n' +
         '  if (uIdOn > 0.5) { gl_FragColor = vec4(uId, 1.0); return; }\n' +
         '  vec3 n = normalize(vN), amb = vAmbF; if (!gl_FrontFacing) { n = -n; amb = vAmbB; } float nl = dot(n, uSunD); float dir = (1.0 - t) * max(nl, 0.0) + t * max(-nl, 0.0);\n' +
-        '  vec3 lin = alb * (uSunE * dir * vSol * uTreeK.x + amb * uTreeK.y);\n' +
-        '  gl_FragColor = vec4(view(mix(lin, vHazeC, vHazeK)), 1.0); }' });
+        '  vec3 lin = alb * (uSunE * dir * vSol * uTreeK.x + amb * uTreeK.y) + uSunE * vRim * edge;   /* round D3: the warm edge, round the fronds\' clusters */\n' +
+        '  gl_FragColor = vec4(view(mix(lin, vHazeC, vHazeK)), cov); }' });
   }
   const bankMat = new THREE.ShaderMaterial({ toneMapped: false, transparent: true, depthWrite: false,
     uniforms: { ...U, uCol: { value: new THREE.Color() }, uId: { value: new THREE.Color() }, uIdOn: { value: 0 } },
@@ -410,6 +425,38 @@ async function loadNow() {
         'void main(){ float r = length(gl_PointCoord - 0.5); if (r > 0.5) discard; gl_FragColor = vec4(uCol * (0.25 + 0.35 * vA) * (1.0 - 2.0 * r) * offScreen(vP), 1.0); }' });
     const dust = new THREE.Points(dg, dustMat); dust.name = 'FX_Dust'; dust.frustumCulled = false; dust.renderOrder = 6; shafts.add(dust);
     shafts.userData = { shaftMat, dustMat }; group.add(shafts);
+    /* round E (Task 8, E-DESIGN «Feixes de sol atrás do público»): sunbeams in the air between the crowns behind the audience (gallery
+       150–240°, r 14–30 m), where the forest leaves a gap — six ribbons along the sun's light, warmer and stronger than the haze's rays,
+       with dust drifting slowly in them. Each fades with the distance and when the line of sight runs along it (seen end-on), and never
+       over the screen (offScreen). The gaps: on a fixed grid of the sector, the points furthest from any trunk, at least 5 m apart. */
+    const trunks = forest.length ? (() => { const out = [], M4 = new THREE.Matrix4(), P = new THREE.Vector3(); for (const im of forest) { if (im.userData.sp === 'feto') continue; for (let k = 0; k < im.count; k++) { im.getMatrixAt(k, M4); P.setFromMatrixPosition(M4); out.push([P.x, P.z]); } } return out; })() : [];
+    const cand = [];
+    for (let a = 150; a <= 240; a += 4) for (let r = 14; r <= 30; r += 1.5) {
+      const th = a * Math.PI / 180, x = r * Math.sin(th), z = -r * Math.cos(th); let gap = 99;
+      for (const [tx, tz] of trunks) gap = Math.min(gap, Math.hypot(tx - x, tz - z));
+      cand.push({ x, z, gap: gap + rnd(0, 0.3, a * 7 + r) });   // a little noise from a fixed seed: equal gaps do not all pick the same row
+    }
+    cand.sort((p, q) => q.gap - p.gap);
+    const picks = []; for (const c of cand) { if (picks.length >= 6) break; if (picks.every(o => Math.hypot(o.x - c.x, o.z - c.z) >= 5)) picks.push(c); }
+    const beamMat = shaftMat.clone(); beamMat.uniforms = { ...U, uCol: { value: WARMD }, uSunD: { value: sd }, uK: { value: 0.9 }, uNoScr, uNoHalf };   // looking away from the sun the haze scatters little (fwd 0.35): a strength that reads as beams
+    beamMat.fragmentShader = beamMat.fragmentShader.replace('gl_FragColor = vec4(uCol * across * along * drift * fwd * uK * offScreen(vW), 1.0); }',
+      'float dist = smoothstep(46.0, 16.0, distance(vW, cameraPosition)), endOn = 1.0 - pow(abs(dot(v, -uSunD)), 6.0);   /* far, or seen along its length: it fades */\n' +
+      '  gl_FragColor = vec4(uCol * across * along * drift * fwd * uK * dist * endOn * offScreen(vW), 1.0); }');
+    // each beam through a point of its gap in the air, 8–16 m up — where the line of sight passes over the audience's tiers — from the
+    // ground up toward the sun as far again (the sun is low: drawn from the ground point, a beam ran 40 m sideways out of the frame,
+    // its lower part behind the tiers)
+    const bl = picks.map((c, i) => { const h = rnd(8, 16, i + 81), P = new THREE.Vector3(c.x, h, c.z), L = h / sd.y; return [P.clone().addScaledVector(sd, L), P.clone().addScaledVector(sd, -L), rnd(0.6, 1.2, i + 71), i]; });
+    const bn = bl.length, bpos = new Float32Array(bn * 12), buv = new Float32Array(bn * 8), bA = new Float32Array(bn * 12), bB = new Float32Array(bn * 12), bW = new Float32Array(bn * 8), bidx = [];
+    bl.forEach(([a, b, w], i) => { [[0, 0], [1, 0], [1, 1], [0, 1]].forEach(([u, v], c) => { const j = i * 4 + c; buv.set([u, v], j * 2); bA.set([a.x, a.y, a.z], j * 3); bB.set([b.x, b.y, b.z], j * 3); bW.set([w, 40 + i * 2.3], j * 2); bpos.set([b.x, b.y, b.z], j * 3); }); bidx.push(i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3); });
+    const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.BufferAttribute(bpos, 3)); bg.setAttribute('uv', new THREE.BufferAttribute(buv, 2));
+    bg.setAttribute('aA', new THREE.BufferAttribute(bA, 3)); bg.setAttribute('aB', new THREE.BufferAttribute(bB, 3)); bg.setAttribute('aW', new THREE.BufferAttribute(bW, 2)); bg.setIndex(bidx);
+    const beamMesh = new THREE.Mesh(bg, beamMat); beamMesh.name = 'FX_Beams_E'; beamMesh.frustumCulled = false; beamMesh.renderOrder = 6; beamMesh.userData.noId = true; shafts.add(beamMesh);
+    // their dust: 240 motes in the lower half of each beam, the room's dust material (offScreen too)
+    const BN = 240, bdp = new Float32Array(BN * 3), bdph = new Float32Array(BN);
+    for (let i = 0; i < BN; i++) { const [a, b, w] = bl[i % bn], t = rnd(0.55, 0.97, i + 901), q = a.clone().lerp(b, t); q.x += rnd(-w, w, i + 911) * 0.5; q.z += rnd(-w, w, i + 921) * 0.5; bdp.set([q.x, q.y, q.z], i * 3); bdph[i] = rnd(0, 6.283, i + 931); }
+    const bdg = new THREE.BufferGeometry(); bdg.setAttribute('position', new THREE.BufferAttribute(bdp, 3)); bdg.setAttribute('aPh', new THREE.BufferAttribute(bdph, 1));
+    const beamDust = new THREE.Points(bdg, dustMat); beamDust.name = 'FX_Beams_E_dust'; beamDust.frustumCulled = false; beamDust.renderOrder = 6; shafts.add(beamDust);
+    shafts.userData.beams = { mesh: beamMesh, dust: beamDust, mat: beamMat, at: picks.map(c => [+c.x.toFixed(1), +c.z.toFixed(1), +c.gap.toFixed(1)]) };
   }
   const BACK_D = new THREE.Vector3(0.30, 0.20, 0.13);   // round D: the wave's outer top, in the low sun (linear light; matched to the d1 renders in Task 7)
   function warmColour(d) {                               // a display value in the sunset haze's hue (sunset_d SKY.far), as fogColour does for the night
@@ -451,9 +498,13 @@ async function loadNow() {
     // round D: the 3D forest (its instanced meshes) and the sun layer's strength
     DF, forest, shafts, setSunK(k) { uSunK.value = k; },
     // round D's knobs (Task 7, matching the site to the approved renders): the sun layer on the room, the trees' sun and sky, the rays, the wave's top
-    tune(o = {}) { if (o.sunK != null) uSunK.value = o.sunK; if (o.treeSun != null) uTreeK.value.x = o.treeSun; if (o.treeAmb != null) uTreeK.value.y = o.treeAmb;
+    tune(o = {}) { if (o.rim != null) uRim.value.x = o.rim;
+      if (o.a2c != null) { A2C = o.a2c ? 1 : 0; forest.forEach(m => { m.material.alphaToCoverage = !!A2C; m.material.defines.A2C = A2C; m.material.needsUpdate = true; }); } if (o.sunK != null) uSunK.value = o.sunK; if (o.treeSun != null) uTreeK.value.x = o.treeSun; if (o.treeAmb != null) uTreeK.value.y = o.treeAmb;
       if (o.shaftK != null && shafts.userData.shaftMat) shafts.userData.shaftMat.uniforms.uK.value = o.shaftK; if (o.back) BACK_D.set(...o.back); setMix(U.uMix.value);
-      return { sunK: uSunK.value, treeSun: uTreeK.value.x, treeAmb: uTreeK.value.y, shaftK: shafts.userData.shaftMat ? shafts.userData.shaftMat.uniforms.uK.value : null, back: BACK_D.toArray() }; },
+      const bm = shafts.userData.beams;   // round E (Task 8): the sunbeams behind the audience, on/off and their strength
+      if (bm && o.beams != null) bm.mesh.visible = bm.dust.visible = !!o.beams; if (bm && o.beamK != null) bm.mat.uniforms.uK.value = o.beamK;
+      return { rim: uRim.value.x, a2c: A2C, sunK: uSunK.value, treeSun: uTreeK.value.x, treeAmb: uTreeK.value.y, shaftK: shafts.userData.shaftMat ? shafts.userData.shaftMat.uniforms.uK.value : null, back: BACK_D.toArray(),
+        beams: bm ? bm.mesh.visible : null, beamK: bm ? bm.mat.uniforms.uK.value : null, beamsAt: bm ? bm.at : null }; },
     forestPositions() { const out = [], m = new THREE.Matrix4(), p = new THREE.Vector3(); for (const im of forest) for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m); p.setFromMatrixPosition(m); out.push({ x: p.x, y: p.y, z: p.z, H: im.userData.H * new THREE.Vector3().setFromMatrixScale(m).y, sp: im.userData.sp }); } return out; },
     // tests (criterion 4): the fastest sway on screen, px/s, as the vertex shader moves it — a point at height h of a tree H high (world)
     // shifts by 0.007·(h/H)³·h along (0.7, 0, 0.3), at 0.6 rad/s; each tree sampled every tenth of its height, only what is in the frame

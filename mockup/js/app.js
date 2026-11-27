@@ -52,7 +52,13 @@ function go(name, opts = {}) {
 /* C2b: into the amphitheatre through the site's dark — 350 ms down, the page changes and the stage gets ready (models, shaders, one
    frame drawn) behind it, 450 ms up on the arrival; only then may the silk start. Reduced motion: no fade down, 200 ms up. */
 const veil = document.getElementById('veil');
-function veilTo(o, ms) { return new Promise(res => { veil.style.transition = ms ? `opacity ${ms}ms cubic-bezier(.35,0,0,1)` : 'none'; void veil.offsetWidth; veil.style.opacity = String(o); setTimeout(res, ms + 20); }); }
+// E2 (the creative chat's point 6, minor 16): never more than 1 s of black without a sign — the veil shows «Loading» from 1 s after it is
+// fully down (in every mode; reduced motion has no hat, and its first load waits under this veil), gone the moment it rises
+const veilWait = document.createElement('p'); veilWait.className = 'veil-wait'; veilWait.setAttribute('role', 'status'); veilWait.hidden = true;
+veilWait.innerHTML = 'Loading<span>.</span><span>.</span><span>.</span>'; veil.appendChild(veilWait);
+let veilWaitT = 0;
+function veilTo(o, ms) { clearTimeout(veilWaitT); veilWait.hidden = true; if (o >= 1) veilWaitT = setTimeout(() => { veilWait.hidden = false; }, ms + 1000);
+  return new Promise(res => { veil.style.transition = ms ? `opacity ${ms}ms cubic-bezier(.35,0,0,1)` : 'none'; void veil.offsetWidth; veil.style.opacity = String(o); setTimeout(res, ms + 20); }); }
 let darkRun = 0;
 async function throughTheDark(name, opts) {
   const id = ++darkRun, rm = reduced(); let open; const gate = new Promise(r => { open = r; });
@@ -60,7 +66,8 @@ async function throughTheDark(name, opts) {
   show(name, { ...opts, gate });
   await Promise.race([work.ready(), new Promise(r => setTimeout(r, 8000))]);
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-  log({ name: 'veu-sobe', start: performance.now() }); await veilTo(0, rm ? 200 : 450); open();
+  // round E: the first entry dives into the hat — its canvas is already the dark, so the veil goes at once and the hat appears on it
+  log({ name: 'veu-sobe', start: performance.now() }); await veilTo(0, rm ? 200 : work.intro ? 0 : 450); open();
 }
 function replay() {
   if (reduced()) { $('#rmAsk').hidden = false; $('#rmAsk .btn').focus(); return; }
@@ -165,7 +172,7 @@ const no3dB = $('.mb-no3d', bar), yB = $('.mb-yellow', bar), thB = $('.mb-theatr
 const reshow = () => { if (view === 'work') show('work', { project: Math.max(0, (work.s3 && work.s3.current) ? PROJECTS.indexOf(work.s3.current) : 0) }); };
 thB.addEventListener('click', () => { stage = { anfi: 'theatre', theatre: 'simple', simple: 'anfi' }[stage]; thB.textContent = STAGE_LABEL[stage]; thB.setAttribute('aria-pressed', String(stage !== 'simple')); acB.hidden = lgB.hidden = stage !== 'anfi'; reshow(); });
 // the amphitheatre's fixed cameras (C1) and its two lights, «aberto» ↔ «sessão» (a 1 200 ms fade)
-acB.addEventListener('click', () => { const s = work.s3; if (!s || !s.anfiCam) return; const n = s.anfiCam(); acB.textContent = 'Camera: ' + { chegada: 'Chegada', lugar: 'Lugar', galeria: 'Galeria' }[n]; });
+acB.addEventListener('click', () => { const s = work.s3; if (!s || !s.anfiCam) return; const n = s.anfiCam(); acB.textContent = 'Camera: ' + ({ chegada: 'Chegada', lugar: 'Lugar', galeria: 'Galeria', ver: 'Ver' }[n] || n); });
 let sessao = true;
 lgB.addEventListener('click', () => {
   const s = work.s3; if (!s || !s.anfiMix) return; sessao = !sessao; lgB.textContent = 'Light: ' + (sessao ? 'Sessão' : 'Aberto'); lgB.setAttribute('aria-pressed', String(sessao));
